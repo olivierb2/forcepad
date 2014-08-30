@@ -549,28 +549,6 @@ static int synaptics_parse_hw_state(const unsigned char buf[],
 			 ((buf[0] & 0x04) >> 1) |
 			 ((buf[3] & 0x04) >> 2));
 
-		hw->left  = (buf[0] & 0x01) ? 1 : 0;
-		hw->right = (buf[0] & 0x02) ? 1 : 0;
-
-		if (SYN_CAP_CLICKPAD(priv->ext_cap_0c)) {
-			/*
-			 * Clickpad's button is transmitted as middle button,
-			 * however, since it is primary button, we will report
-			 * it as BTN_LEFT.
-			 */
-			hw->left = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
-
-		} else if (SYN_CAP_MIDDLE_BUTTON(priv->capabilities)) {
-			hw->middle = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
-			if (hw->w == 2)
-				hw->scroll = (signed char)(buf[1]);
-		}
-
-		if (SYN_CAP_FOUR_BUTTON(priv->capabilities)) {
-			hw->up   = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
-			hw->down = ((buf[0] ^ buf[3]) & 0x02) ? 1 : 0;
-		}
-
 		if ((SYN_CAP_ADV_GESTURE(priv->ext_cap_0c) ||
 			SYN_CAP_IMAGE_SENSOR(priv->ext_cap_0c)) &&
 		    hw->w == 2) {
@@ -585,6 +563,48 @@ static int synaptics_parse_hw_state(const unsigned char buf[],
 			 ((buf[1] & 0xf0) << 4) |
 			 buf[5]);
 		hw->z = buf[2];
+
+
+		hw->left  = (buf[0] & 0x01) ? 1 : 0;
+		hw->right = (buf[0] & 0x02) ? 1 : 0;
+
+		if (SYN_CAP_CLICKPAD(priv->ext_cap_0c)) {
+			/*
+			 * Clickpad's button is transmitted as middle button,
+			 * however, since it is primary button, we will report
+			 * it as BTN_LEFT.
+			 */
+			// hw->left = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
+
+			if (hw->z == 0) {
+				priv->press = priv->report_press = false;
+			} else if (hw->w >= 4 && ((buf[0] ^ buf[3]) & 0x01)) {
+				/*
+				 * SIngle-finger touch only.
+				 */
+				if  (!priv->press) {
+					priv->press_start = jiffies;
+					priv->press = true;
+				} else if (time_after(jiffies,
+						priv->press_start + msecs_to_jiffies(10))) {
+					priv->report_press = true;
+				}
+			} else {
+				priv->press = false;
+			}
+
+			hw->left = priv->report_press;
+
+		} else if (SYN_CAP_MIDDLE_BUTTON(priv->capabilities)) {
+			hw->middle = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
+			if (hw->w == 2)
+				hw->scroll = (signed char)(buf[1]);
+		}
+
+		if (SYN_CAP_FOUR_BUTTON(priv->capabilities)) {
+			hw->up   = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
+			hw->down = ((buf[0] ^ buf[3]) & 0x02) ? 1 : 0;
+		}
 
 		if (SYN_CAP_MULTI_BUTTON_NO(priv->ext_cap) &&
 		    ((buf[0] ^ buf[3]) & 0x02)) {
