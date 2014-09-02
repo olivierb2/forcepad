@@ -538,6 +538,8 @@ static void synaptics_parse_agm(const unsigned char buf[],
 	priv->agm_pending = true;
 }
 
+static bool is_forcepad;
+
 static int synaptics_parse_hw_state(const unsigned char buf[],
 				    struct synaptics_data *priv,
 				    struct synaptics_hw_state *hw)
@@ -568,25 +570,29 @@ static int synaptics_parse_hw_state(const unsigned char buf[],
 		hw->left  = (buf[0] & 0x01) ? 1 : 0;
 		hw->right = (buf[0] & 0x02) ? 1 : 0;
 
-		if (SYN_CAP_CLICKPAD(priv->ext_cap_0c)) {
+		if (is_forcepad) { /* XXX is there a proper capability bit for this ? */
 			/*
-			 * Clickpad's button is transmitted as middle button,
-			 * however, since it is primary button, we will report
-			 * it as BTN_LEFT.
+			 * ForcePads, like Clickpads, use middle button
+			 * bits to report primary button clicks.
+			 * Unfortunately they report primary button not only
+			 * when user presses on the pad above certain threshold,
+			 * but also when there are more than one finger on the
+			 * touchpad, which interferes with out multi-finger
+			 * gestures.
 			 */
-			// hw->left = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
-
 			if (hw->z == 0) {
+				/* No contacts */
 				priv->press = priv->report_press = false;
 			} else if (hw->w >= 4 && ((buf[0] ^ buf[3]) & 0x01)) {
 				/*
-				 * SIngle-finger touch only.
+				 * Single-finger touch with pressure above
+				 * the threshold.
 				 */
 				if  (!priv->press) {
 					priv->press_start = jiffies;
 					priv->press = true;
 				} else if (time_after(jiffies,
-						priv->press_start + msecs_to_jiffies(10))) {
+						priv->press_start + msecs_to_jiffies(50))) {
 					priv->report_press = true;
 				}
 			} else {
@@ -594,6 +600,14 @@ static int synaptics_parse_hw_state(const unsigned char buf[],
 			}
 
 			hw->left = priv->report_press;
+
+		} else if (SYN_CAP_CLICKPAD(priv->ext_cap_0c)) {
+			/*
+			 * Clickpad's button is transmitted as middle button,
+			 * however, since it is primary button, we will report
+			 * it as BTN_LEFT.
+			 */
+			hw->left = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
 
 		} else if (SYN_CAP_MIDDLE_BUTTON(priv->capabilities)) {
 			hw->middle = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
@@ -1614,12 +1628,25 @@ static const struct dmi_system_id min_max_dmi_table[] __initconst = {
 	{ }
 };
 
+static const struct dmi_system_id forcepad_dmi_table[] __initconst = {
+#if defined(CONFIG_DMI) && defined(CONFIG_X86)
+	{
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "HP EliteBook Folio 1040 G1"),
+		},
+	},
+#endif
+	{ }
+};
+
 void __init synaptics_module_init(void)
 {
 	const struct dmi_system_id *min_max_dmi;
 
 	impaired_toshiba_kbc = dmi_check_system(toshiba_dmi_table);
 	broken_olpc_ec = dmi_check_system(olpc_dmi_table);
+	is_forcepad = dmi_check_system(forcepad_dmi_table);
 
 	min_max_dmi = dmi_first_match(min_max_dmi_table);
 	if (min_max_dmi)
